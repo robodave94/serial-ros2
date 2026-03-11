@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 project(serial)
 
 find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
@@ -46,11 +47,27 @@ target_include_directories(${PROJECT_NAME} PRIVATE include)
 # add_dependencies(serial_example ${PROJECT_NAME})
 # target_link_libraries(serial_example ${PROJECT_NAME})
 
+## Autofind devices ROS2 node
+add_executable(autofind_devices src/autofind_devices.cpp)
+target_include_directories(autofind_devices PRIVATE include)
+target_link_libraries(autofind_devices ${PROJECT_NAME})
+ament_target_dependencies(autofind_devices rclcpp)
+
 
 ## Install executable
 install(TARGETS ${PROJECT_NAME}
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
+)
+
+## Install autofind_devices node
+install(TARGETS autofind_devices
+    DESTINATION lib/${PROJECT_NAME}
+)
+
+## Install launch files
+install(DIRECTORY launch/
+    DESTINATION share/${PROJECT_NAME}/launch
 )
 
 ## Install headers

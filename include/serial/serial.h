@@ -43,6 +43,8 @@
 #include <sstream>
 #include <exception>
 #include <stdexcept>
+#include <iostream>
+#include <map>
 #include <serial/v8stdint.h>
 
 #define THROW(exceptionClass, message) throw exceptionClass(__FILE__, \
@@ -769,6 +771,115 @@ struct PortInfo {
  */
 std::vector<PortInfo>
 list_ports();
+
+/*!
+ * Finds all serial port paths matching the PID:VID string in hardware_id.
+ *
+ * \param pid_vid_str A string containing the PID:VID to search for (e.g., "16C0:0483").
+ *
+ * \return A vector of port paths (e.g., {"/dev/ttyACM0", "/dev/ttyACM1"}) for all matching devices.
+ *
+ * \throw std::runtime_error if no matching port is found.
+ */
+inline std::vector<std::string> findSerialMultipleSerialDevicePathsByPIDVID(const std::string &pid_vid_str)
+{
+    std::vector<std::string> matching_ports;
+    std::vector<serial::PortInfo> devices_found = serial::list_ports();
+
+    for (const serial::PortInfo &element : devices_found)
+    {
+        if (element.hardware_id != "n/a")
+        {
+            std::cout << "Hardware Info: " << element.hardware_id << std::endl;
+
+            // Check if the current port matches the provided PID and VID
+            if (element.hardware_id.find(pid_vid_str) != std::string::npos)
+            {
+                std::cout << "Accepted port as targeted object for connection: " << element.hardware_id << std::endl;
+                matching_ports.push_back(element.port);
+            }
+            else
+            {
+                std::cout << "Detail port: " << element.hardware_id << std::endl;
+            }
+        }
+    }
+
+    if (matching_ports.empty())
+    {
+        throw std::runtime_error("No port found matching PID:VID: " + pid_vid_str);
+    }
+
+    return matching_ports;
+}
+
+/*!
+ * Finds the first serial port path matching the PID:VID string in hardware_id.
+ *
+ * \param pid_vid_str A string containing the PID:VID to search for (e.g., "16C0:0483").
+ *
+ * \return The port path (e.g., "/dev/ttyACM0") if found.
+ *
+ * \throw std::runtime_error if no matching port is found.
+ */
+inline std::string findSerialDevicePathByPIDVID(const std::string &pid_vid_str)
+{
+    std::vector<std::string> ports = findSerialMultipleSerialDevicePathsByPIDVID(pid_vid_str);
+    return ports.front();
+}
+
+/*!
+ * Checks if a substring exists in the hardware_id of a serial device at the given path.
+ *
+ * \param device_path The path of the serial device (e.g., "/dev/ttyACM0").
+ * \param substring The substring to search for in the hardware_id.
+ *
+ * \return true if the substring is found in the device's hardware_id, false otherwise.
+ */
+inline bool findStringCharacteristicInDevicePath(const std::string &device_path, const std::string &substring)
+{
+    std::vector<serial::PortInfo> devices_found = serial::list_ports();
+
+    for (const serial::PortInfo &element : devices_found)
+    {
+        if (element.port == device_path && element.hardware_id != "n/a")
+        {
+            return element.hardware_id.find(substring) != std::string::npos;
+        }
+    }
+
+    return false;
+}
+
+/*!
+ * Finds all serial devices matching a PID:VID and checks each for a substring in their hardware_id.
+ *
+ * \param pid_vid_str A string containing the PID:VID to search for (e.g., "16C0:0483").
+ * \param substring The substring to search for in the hardware_id of each matching device.
+ * \param only_return_true_paths If true, the returned map will only contain entries where the substring was found.
+ *
+ * \return A map where keys are device paths and values indicate whether the substring was found.
+ *
+ * \throw std::runtime_error if no matching port is found for the given PID:VID.
+ */
+inline std::map<std::string, bool> findSubstringInDevicesByPIDVID(const std::string &pid_vid_str,
+                                                                   const std::string &substring,
+                                                                   bool only_return_true_paths = false)
+{
+    std::vector<std::string> matching_paths = findSerialMultipleSerialDevicePathsByPIDVID(pid_vid_str);
+    std::map<std::string, bool> result;
+
+    for (const std::string &path : matching_paths)
+    {
+        bool found = findStringCharacteristicInDevicePath(path, substring);
+        if (!only_return_true_paths || found)
+        {
+            result[path] = found;
+        }
+    }
+
+    return result;
+}
 
 } // namespace serial
 

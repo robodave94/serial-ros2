@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Arguments for the autofind_devices node -->
+    <arg name="pidvid" default="" description="PID:VID string to search for (e.g., '16C0:0483')"/>
+    <arg name="serial_number_1" default="" description="First serial number to search for"/>
+    <arg name="serial_number_2" default="" description="Second serial number to search for"/>
+
+    <!-- Launch the autofind_devices node -->
+    <node pkg="serial" exec="autofind_devices" name="autofind_devices" output="screen">
+        <param name="pidvid" value="$(var pidvid)"/>
+        <param name="serial_number_1" value="$(var serial_number_1)"/>
+        <param name="serial_number_2" value="$(var serial_number_2)"/>
+    </node>
+</launch>
