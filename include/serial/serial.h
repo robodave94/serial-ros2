@@ -45,6 +45,9 @@
 #include <stdexcept>
 #include <iostream>
 #include <map>
+#include <fstream>
+#include <algorithm>
+#include <filesystem>
 #include <serial/v8stdint.h>
 
 #define THROW(exceptionClass, message) throw exceptionClass(__FILE__, \
@@ -773,6 +776,112 @@ std::vector<PortInfo>
 list_ports();
 
 /*!
+ * Finds all /dev/videoX paths for a USB device matching the given PID:VID by walking sysfs.
+ * Returns only the lowest-numbered video node per USB interface (i.e. the capture node).
+ *
+ * \param pid_vid_str A string containing the PID:VID to search for (e.g., "0c45:6366").
+ *
+ * \return A vector of video device paths (e.g., {"/dev/video4"}) for all matching devices.
+ *
+ * \throw std::runtime_error if the pid_vid_str format is invalid.
+ */
+inline std::vector<std::string> findVideoDevicesByPIDVID(const std::string &pid_vid_str)
+{
+    namespace fs = std::filesystem;
+
+    size_t colon_pos = pid_vid_str.find(':');
+    if (colon_pos == std::string::npos)
+        throw std::runtime_error("Invalid PID:VID format: " + pid_vid_str);
+
+    std::string vendor_id = pid_vid_str.substr(0, colon_pos);
+    std::string product_id = pid_vid_str.substr(colon_pos + 1);
+
+    std::vector<std::string> video_paths;
+    std::error_code ec;
+
+    for (const auto &entry : fs::directory_iterator("/sys/bus/usb/devices", ec))
+    {
+        fs::path dev_dir = entry.path();
+
+        std::ifstream vf(dev_dir / "idVendor");
+        if (!vf.is_open()) continue;
+        std::string vendor;
+        std::getline(vf, vendor);
+        vendor.erase(vendor.find_last_not_of(" \t\n\r") + 1);
+        if (vendor != vendor_id) continue;
+
+        std::ifstream pf(dev_dir / "idProduct");
+        if (!pf.is_open()) continue;
+        std::string product;
+        std::getline(pf, product);
+        product.erase(product.find_last_not_of(" \t\n\r") + 1);
+        if (product != product_id) continue;
+
+        // Found matching USB device — find video4linux nodes underneath
+        for (const auto &sub : fs::recursive_directory_iterator(dev_dir, ec))
+        {
+            if (sub.path().filename() == "video4linux")
+            {
+                std::vector<std::string> nodes;
+                for (const auto &video_node : fs::directory_iterator(sub.path(), ec))
+                {
+                    std::string node_name = video_node.path().filename().string();
+                    if (node_name.rfind("video", 0) == 0)
+                        nodes.push_back("/dev/" + node_name);
+                }
+                // Keep only the lowest-numbered node per USB interface
+                if (!nodes.empty())
+                {
+                    std::sort(nodes.begin(), nodes.end());
+                    video_paths.push_back(nodes.front());
+                }
+            }
+        }
+    }
+
+    return video_paths;
+}
+
+/*!
+ * Reads the USB serial number for a /dev/videoX device by resolving its sysfs path
+ * and walking up the tree until a 'serial' file is found.
+ *
+ * \param video_path The path of the video device (e.g., "/dev/video4").
+ *
+ * \return The USB serial number string, or an empty string if not found.
+ */
+inline std::string getUSBSerialForVideoDevice(const std::string &video_path)
+{
+    namespace fs = std::filesystem;
+    std::string device_name = video_path.substr(video_path.rfind('/') + 1);
+    fs::path sysfs_link = "/sys/class/video4linux/" + device_name + "/device";
+
+    std::error_code ec;
+    fs::path dev_path = fs::canonical(sysfs_link, ec);
+    if (ec) return "";
+
+    // Walk up the sysfs tree until we find a 'serial' file
+    fs::path p = dev_path;
+    while (p != p.root_path())
+    {
+        fs::path serial_file = p / "serial";
+        if (fs::exists(serial_file, ec))
+        {
+            std::ifstream sf(serial_file);
+            if (sf.is_open())
+            {
+                std::string serial;
+                std::getline(sf, serial);
+                serial.erase(serial.find_last_not_of(" \t\n\r") + 1);
+                return serial;
+            }
+        }
+        p = p.parent_path();
+    }
+    return "";
+}
+
+/*!
  * Finds all serial port paths matching the PID:VID string in hardware_id.
  *
  * \param pid_vid_str A string containing the PID:VID to search for (e.g., "16C0:0483").
@@ -805,8 +914,16 @@ inline std::vector<std::string> findSerialMultipleSerialDevicePathsByPIDVID(cons
         }
     }
 
+    // Fall back to UVC video devices if no serial ports matched
     if (matching_ports.empty())
     {
+        std::vector<std::string> video_ports = findVideoDevicesByPIDVID(pid_vid_str);
+        if (!video_ports.empty())
+        {
+            std::cout << "No serial ports found for PID:VID " << pid_vid_str
+                      << ", falling back to " << video_ports.size() << " video device(s)" << std::endl;
+            return video_ports;
+        }
         throw std::runtime_error("No port found matching PID:VID: " + pid_vid_str);
     }
 
@@ -838,6 +955,13 @@ inline std::string findSerialDevicePathByPIDVID(const std::string &pid_vid_str)
  */
 inline bool findStringCharacteristicInDevicePath(const std::string &device_path, const std::string &substring)
 {
+    // If this is a video device, match against the USB serial number via sysfs
+    if (device_path.find("/dev/video") == 0)
+    {
+        std::string usb_serial = getUSBSerialForVideoDevice(device_path);
+        return !usb_serial.empty() && usb_serial.find(substring) != std::string::npos;
+    }
+
     std::vector<serial::PortInfo> devices_found = serial::list_ports();
 
     for (const serial::PortInfo &element : devices_found)
