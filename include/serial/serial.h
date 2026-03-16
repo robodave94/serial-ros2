@@ -793,8 +793,15 @@ inline std::vector<std::string> findVideoDevicesByPIDVID(const std::string &pid_
     if (colon_pos == std::string::npos)
         throw std::runtime_error("Invalid PID:VID format: " + pid_vid_str);
 
-    std::string vendor_id = pid_vid_str.substr(0, colon_pos);
-    std::string product_id = pid_vid_str.substr(colon_pos + 1);
+    // Normalize: strip optional 0x/0X prefix and lowercase to match sysfs idVendor/idProduct format
+    auto normalizeHex = [](std::string s) -> std::string {
+        if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+            s = s.substr(2);
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+        return s;
+    };
+    std::string vendor_id = normalizeHex(pid_vid_str.substr(0, colon_pos));
+    std::string product_id = normalizeHex(pid_vid_str.substr(colon_pos + 1));
 
     std::vector<std::string> video_paths;
     std::error_code ec;
